@@ -1,69 +1,67 @@
-import dash
-from dash import dcc, html, Input, Output
-import plotly.express as px
+# app.py
+import os
 import pandas as pd
+from dash import Dash, dcc, html, Input, Output
+import plotly.express as px
 
-# 1. ساخت داده‌های نمونه
-df = pd.DataFrame({
-    "محصول": ["گوشی موبایل", "لپ‌تاپ", "هدفون", "ساعت هوشمند", "تبلت", 
-               "گوشی موبایل", "لپ‌تاپ", "هدفون", "ساعت هوشمند", "تبلت"],
-    "تعداد فروش": [120, 85, 200, 150, 90, 130, 95, 210, 160, 100],
-    "شهر": ["تهران", "تهران", "تهران", "تهران", "تهران", 
-            "اصفهان", "اصفهان", "اصفهان", "اصفهان", "اصفهان"],
-    "درامد (میلیون)": [2400, 4250, 600, 750, 1800, 2600, 4750, 630, 800, 2000]
-})
+# دیتا نمونه
+data = {
+    "Date": pd.date_range(start="2024-01-01", periods=100),
+    "Region": ["Tehran", "Isfahan", "Tabriz", "Shiraz"] * 25,
+    "Sales": [x * 10 for x in range(1, 101)],
+    "Product": ["A", "B", "C", "D"] * 25
+}
+df = pd.DataFrame(data)
 
-# 2. راه‌اندازی اپلیکیشن
-app = dash.Dash(__name__, title="داشبورد فروش")
+app = Dash(__name__)
+server = app.server  # مهم: gunicorn از این استفاده می‌کند
 
-# *** خط بسیار مهم برای Render ***
-server = app.server 
-
-# 3. طراحی ظاهر (Layout)
-app.layout = html.Div(style={'font-family': 'Tahoma, Arial', 'direction': 'rtl', 'padding': '20px'}, children=[
-    
-    html.H1("📊 داشبورد تحلیل فروش آنلاین", style={'textAlign': 'center', 'color': '#2c3e50'}),
-    
-    html.Div("این داشبورد جهت نمایش به کارفرما طراحی شده است.", 
-             style={'textAlign': 'center', 'color': '#7f8c8d', 'marginBottom': '30px'}),
-
-    # انتخاب‌گر شهر
+app.layout = html.Div(style={"fontFamily": "Arial, sans-serif", "maxWidth": "1000px", "margin": "auto"}, children=[
+    html.H1("داشبورد فروش", style={"textAlign": "center"}),
     html.Div([
-        html.Label("انتخاب شهر:"),
-        dcc.Dropdown(
-            id='city-dropdown',
-            options=[{'label': city, 'value': city} for city in df['شهر'].unique()],
-            value='تهران',
-            clearable=False
-        )
-    ], style={'width': '30%', 'marginBottom': '20px'}),
+        html.Div([
+            html.Label("محصول:"),
+            dcc.Dropdown(
+                id="product_filter",
+                options=[{"label": p, "value": p} for p in sorted(df["Product"].unique())],
+                value="A",
+                clearable=False,
+                style={"width": "200px"}
+            )
+        ], style={"display": "inline-block", "marginRight": "20px"}),
 
-    # نمودارها
-    html.Div([
-        dcc.Graph(id='sales-bar-graph', style={'display': 'inline-block', 'width': '48%'}),
-        dcc.Graph(id='revenue-pie-chart', style={'display': 'inline-block', 'width': '48%'})
-    ])
+        html.Div(id="kpis", style={"display": "inline-block", "verticalAlign": "top"})
+    ], style={"marginBottom": "20px"}),
+
+    dcc.Graph(id="sales_chart"),
+
+    html.H4("Top Regions"),
+    dcc.Graph(id="top_regions")
 ])
 
-# 4. بخش تعاملی (Callback)
 @app.callback(
-    [Output('sales-bar-graph', 'figure'),
-     Output('revenue-pie-chart', 'figure')],
-    [Input('city-dropdown', 'value')]
+    Output("sales_chart", "figure"),
+    Output("kpis", "children"),
+    Output("top_regions", "figure"),
+    Input("product_filter", "value")
 )
-def update_charts(selected_city):
-    filtered_df = df[df['شهر'] == selected_city]
-    
-    # نمودار میله‌ای
-    fig1 = px.bar(filtered_df, x='محصول', y='تعداد فروش', 
-                  title=f"تعداد فروش در {selected_city}", text='تعداد فروش')
-    fig1.update_traces(marker_color='#3498db')
-    
-    # نمودار دایره‌ای
-    fig2 = px.pie(filtered_df, values='درامد (میلیون)', names='محصول', 
-                  title=f"سهم درآمد در {selected_city}")
-    
-    return fig1, fig2
+def update(product):
+    filtered = df[df["Product"] == product]
+    fig1 = px.line(filtered, x="Date", y="Sales", title=f"روند فروش محصول {product}")
 
-if __name__ == '__main__':
-    app.run_server(debug=True)
+    total = filtered["Sales"].sum()
+    avg = filtered["Sales"].mean()
+
+    kpi_div = html.Div([
+        html.Div([html.H3(f"{total:,}"), html.P("جمع فروش")], style={"display":"inline-block", "marginRight":"30px"}),
+        html.Div([html.H3(f"{avg:.2f}"), html.P("میانگین روزانه")], style={"display":"inline-block"})
+    ])
+
+    top = filtered.groupby("Region")["Sales"].sum().reset_index().sort_values("Sales", ascending=False)
+    fig2 = px.bar(top, x="Region", y="Sales", title="مناطق برتر")
+
+    return fig1, kpi_div, fig2
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8050))
+    app.run_server(host="0.0.0.0", port=port, debug=False)
